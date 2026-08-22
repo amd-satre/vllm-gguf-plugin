@@ -7,7 +7,6 @@ import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-import gguf
 import torch
 from vllm.logger import init_logger
 from vllm.model_executor.models.utils import WeightsMapper
@@ -98,13 +97,11 @@ def _find_nextn_block_index_from_names(
 
 
 def _find_nextn_block_index(gguf_files: Iterable[str]) -> int | None:
-    for gguf_file in gguf_files:
-        block_index = _find_nextn_block_index_from_names(
-            tensor.name for tensor in gguf.GGUFReader(gguf_file).tensors
-        )
-        if block_index is not None:
-            return block_index
-    return None
+    # Routed through get_gguf_tensor_names (which shares a cached GGUFReader
+    # per file) instead of constructing a fresh GGUFReader here -- this is
+    # frequently called on the same backbone file(s) already read elsewhere
+    # during the same model load.
+    return _find_nextn_block_index_from_names(get_gguf_tensor_names(gguf_files))
 
 
 def qwen35_layer_substr(is_moe: bool) -> dict[str, str]:

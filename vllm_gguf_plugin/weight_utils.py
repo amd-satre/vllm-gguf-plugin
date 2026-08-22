@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import functools
 import glob
 import itertools
 import os
@@ -15,6 +16,20 @@ from vllm.logger import init_logger
 from vllm.transformers_utils.repo_utils import list_filtered_repo_files
 
 logger = init_logger(__name__)
+
+
+@functools.lru_cache(maxsize=32)
+def _cached_gguf_reader(gguf_file: str) -> gguf.GGUFReader:
+    """Share one GGUFReader per file across a single model load.
+
+    Constructing a GGUFReader re-parses the entire KV metadata section
+    (including the full tokenizer vocab array, tens of thousands of Python
+    string objects) from scratch in pure Python. A single load calls this
+    for the same backbone file(s) from at least three independent places
+    (tensor-name enumeration, unquantized-module detection, and the actual
+    weight-data iterator) -- caching collapses those into one parse.
+    """
+    return gguf.GGUFReader(gguf_file)
 
 
 def download_gguf(
@@ -138,7 +153,7 @@ def get_gguf_tensor_names(gguf_files: Iterable[str]) -> set[str]:
     return {
         tensor.name
         for gguf_file in gguf_files
-        for tensor in gguf.GGUFReader(gguf_file).tensors
+        for tensor in _cached_gguf_reader(gguf_file).tensors
     }
 
 
@@ -162,7 +177,7 @@ def gguf_quant_weights_iterator_multi(
     _QUANT_TYPES = ("F32", "BF16", "F16")
 
     for gguf_file in gguf_files:
-        reader = gguf.GGUFReader(gguf_file)
+        reader = _cached_gguf_reader(gguf_file)
         for tensor in reader.tensors:
             if gguf_to_hf_name_map is not None:
                 if tensor.name not in gguf_to_hf_name_map:
@@ -206,7 +221,7 @@ def get_gguf_unquantized_params(gguf_files: list[str]) -> list[str]:
         {
             tensor.name
             for gguf_file in gguf_files
-            for tensor in gguf.GGUFReader(gguf_file).tensors
+            for tensor in _cached_gguf_reader(gguf_file).tensors
             if tensor.tensor_type.name in _QUANT_TYPES
         }
     )
